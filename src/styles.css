@@ -1,0 +1,4 @@
+* { box-sizing: border-box; }
+body { margin: 0; background: #F2F1ED; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #111; }
+button, input, select, textarea { font-family: inherit; }
+button:disabled { cursor: not-allowed; opacity: .65; }
