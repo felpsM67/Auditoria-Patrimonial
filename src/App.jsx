@@ -837,11 +837,18 @@ function UploadPage({ onFile, autoStatus }) {
 /* ==== src/pages/SelectPage.jsx ==== */
 
 function SelectPage({ headers, allData, responsaveis, onSelect, onImportMode, onReloadBase }) {
+  // Um cartão por filial de cada responsável.
   const resumo = useMemo(() => {
-    return responsaveis.map((resp) => {
-      const items = allData.filter((row) => clean(getByField(headers, row, 'responsavel')) === resp);
-      const filial = clean(getByField(headers, items[0] || [], 'filial'));
-      return { resp, total: items.length, filial };
+    return responsaveis.flatMap((resp) => {
+      const porFilial = new Map();
+      allData.forEach((row) => {
+        if (clean(getByField(headers, row, 'responsavel')) !== resp) return;
+        const filial = clean(getByField(headers, row, 'filial'));
+        porFilial.set(filial, (porFilial.get(filial) || 0) + 1);
+      });
+      return [...porFilial.entries()]
+        .sort(([a], [b]) => a.localeCompare(b, 'pt-BR'))
+        .map(([filial, total]) => ({ resp, filial, total }));
     });
   }, [headers, allData, responsaveis]);
 
@@ -857,7 +864,7 @@ function SelectPage({ headers, allData, responsaveis, onSelect, onImportMode, on
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', gap: 12 }}>
           {resumo.map((item) => (
-            <button key={item.resp} onClick={() => onSelect(item.resp)} style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 12, padding: '16px 18px', textAlign: 'left', cursor: 'pointer' }}>
+            <button key={`${item.resp}|${item.filial}`} onClick={() => onSelect(item.resp, item.filial)} style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 12, padding: '16px 18px', textAlign: 'left', cursor: 'pointer' }}>
               <div style={{ fontWeight: 900, fontSize: 15, marginBottom: 4 }}>{item.resp}</div>
               <div style={{ color: P.muted, fontSize: 12 }}>{item.filial || 'Filial não informada'}</div>
               <div style={{ marginTop: 10, fontSize: 13, fontWeight: 800, color: JD.green }}>{item.total} itens</div>
@@ -957,9 +964,10 @@ const readPhoto = async (file, cb) => {
   }
 };
 
-function AuditPage({ headers, allData, selectedResp, responses, setResponses, extraItems, setExtraItems, savedAt, onBack }) {
+function AuditPage({ headers, allData, selectedResp, initialFilial, responses, setResponses, extraItems, setExtraItems, savedAt, onBack }) {
   const [search, setSearch] = useState('');
   const [areaFilter, setAreaFilter] = useState('');
+  const [filialFilter, setFilialFilter] = useState(initialFilial || '');
   const [onlyUnmarked, setOnlyUnmarked] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -968,17 +976,32 @@ function AuditPage({ headers, allData, selectedResp, responses, setResponses, ex
 
   const areas = useMemo(() => [...new Set(myItems.map(({ row }) => clean(getByField(headers, row, 'area'))).filter(Boolean))].sort(), [headers, myItems]);
 
+  const filiais = useMemo(() => [...new Set(myItems.map(({ row }) => clean(getByField(headers, row, 'filial'))).filter(Boolean))].sort(), [headers, myItems]);
+
   const filtered = useMemo(() => {
     const s = search.toLowerCase();
     return myItems.filter(({ row, idx }) => {
       const plaqueta = clean(getByField(headers, row, 'plaqueta')).toLowerCase();
       const descricao = clean(getByField(headers, row, 'descricao')).toLowerCase();
       const area = clean(getByField(headers, row, 'area'));
+      const filial = clean(getByField(headers, row, 'filial'));
       return (!s || plaqueta.includes(s) || descricao.includes(s))
         && (!areaFilter || area === areaFilter)
+        && (!filialFilter || filial === filialFilter)
         && (!onlyUnmarked || !responses[idx]?.cenario);
     });
-  }, [headers, myItems, search, areaFilter, onlyUnmarked, responses]);
+  }, [headers, myItems, search, areaFilter, filialFilter, onlyUnmarked, responses]);
+
+  // Agrupa os itens visíveis por filial, só para exibição.
+  const gruposFilial = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((item) => {
+      const filial = clean(getByField(headers, item.row, 'filial')) || 'Filial não informada';
+      if (!map.has(filial)) map.set(filial, []);
+      map.get(filial).push(item);
+    });
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b, 'pt-BR'));
+  }, [headers, filtered]);
 
   const stats = useMemo(() => {
     const A = myItems.filter(({ idx }) => responses[idx]?.cenario === 'A').length;
@@ -1069,7 +1092,7 @@ function AuditPage({ headers, allData, selectedResp, responses, setResponses, ex
     }
   };
 
-  const filial = clean(getByField(headers, myItems[0]?.row || [], 'filial'));
+  const filial = filialFilter || clean(getByField(headers, myItems[0]?.row || [], 'filial'));
 
   return (
     <div style={{ background: P.bg, minHeight: '100vh' }}>
@@ -1097,16 +1120,28 @@ function AuditPage({ headers, allData, selectedResp, responses, setResponses, ex
       </div>
 
       <div style={{ maxWidth: 960, margin: '0 auto', padding: '18px 16px' }}>
-        <div style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 12, padding: 14, display: 'grid', gridTemplateColumns: '1fr 190px 150px', gap: 10, marginBottom: 14 }}>
+        <div style={{ background: P.card, border: `1px solid ${P.border}`, borderRadius: 12, padding: 14, display: 'grid', gridTemplateColumns: '1fr 190px 190px 150px', gap: 10, marginBottom: 14 }}>
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por plaqueta ou descrição" style={{ border: `1px solid ${P.border}`, borderRadius: 8, padding: '9px 10px' }} />
           <select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} style={{ border: `1px solid ${P.border}`, borderRadius: 8, padding: '9px 10px' }}>
             <option value="">Todas as áreas</option>
             {areas.map((a) => <option key={a} value={a}>{a}</option>)}
           </select>
+          <select value={filialFilter} onChange={(e) => setFilialFilter(e.target.value)} style={{ border: `1px solid ${P.border}`, borderRadius: 8, padding: '9px 10px' }}>
+            <option value="">Todas as filiais</option>
+            {filiais.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}><input type="checkbox" checked={onlyUnmarked} onChange={(e) => setOnlyUnmarked(e.target.checked)} /> Não marcados</label>
         </div>
 
-        {filtered.map(({ row, idx }) => {
+        {gruposFilial.map(([nomeFilial, itens]) => {
+          const feitos = itens.filter(({ idx }) => responses[idx]?.cenario).length;
+          return (
+          <div key={nomeFilial} style={{ marginBottom: 22 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, borderBottom: `2px solid ${JD.green}`, padding: '4px 2px 6px', marginBottom: 12 }}>
+              <div style={{ fontWeight: 900, fontSize: 16, color: JD.greenDark }}>{nomeFilial}</div>
+              <div style={{ fontSize: 12, color: P.muted, fontWeight: 700 }}>{feitos}/{itens.length} marcados</div>
+            </div>
+        {itens.map(({ row, idx }) => {
           const r = responses[idx] || {};
           const plaqueta = clean(getByField(headers, row, 'plaqueta')) || 'Sem plaqueta';
           const descricao = clean(getByField(headers, row, 'descricao')) || 'Sem descrição';
@@ -1142,6 +1177,9 @@ function AuditPage({ headers, allData, selectedResp, responses, setResponses, ex
                 )}
               </div>
             </div>
+          );
+        })}
+          </div>
           );
         })}
 
@@ -1331,6 +1369,7 @@ function App() {
   const [headers, setHeaders] = useState([]);
   const [allData, setAllData] = useState([]);
   const [selectedResp, setSelectedResp] = useState('');
+  const [selectedFilial, setSelectedFilial] = useState('');
   const [responses, setResponses] = useState({});
   const [extraItems, setExtraItems] = useState([]);
   const [savedAt, setSavedAt] = useState(null);
@@ -1412,8 +1451,9 @@ function App() {
     }
   }, [responses, extraItems, selectedResp, stage]);
 
-  const selectResp = (resp) => {
+  const selectResp = (resp, filial = '') => {
     setSelectedResp(resp);
+    setSelectedFilial(filial);
     const saved = localStorage.getItem(localStorageKey(resp));
     if (saved) {
       try {
@@ -1448,6 +1488,7 @@ function App() {
         headers={headers}
         allData={allData}
         selectedResp={selectedResp}
+        initialFilial={selectedFilial}
         responses={responses}
         setResponses={setResponses}
         extraItems={extraItems}
